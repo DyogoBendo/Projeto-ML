@@ -13,7 +13,7 @@ def read_data():
             temp_df = pd.read_csv(filename, encoding='unicode_escape')
             
             season_name = os.path.basename(filename).replace('.csv', '')
-            temp_df['Source_Season'] = season_name 
+            temp_df['Season'] = season_name 
             
             df_list.append(temp_df)
             

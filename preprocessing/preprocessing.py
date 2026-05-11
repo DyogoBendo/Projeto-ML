@@ -12,52 +12,72 @@ df_train = pd.DataFrame()
 df_train['Date'] = df['Date']
 df_train['HomeTeam'] = df['HomeTeam']
 df_train['AwayTeam'] = df['AwayTeam']
-
-window = 5
+df_train['Season'] = df['Season']
 
 # =========================================================
-# FEATURE GENERATION (SPECIFIC & GENERAL)
+# CREATE PERSPECTIVE POINTS (Win=1, Draw=0, Loss=-1)
 # =========================================================
 
-# Helper lists to loop through to keep code clean
-# Format: (Stat Name, Home Column, Away Column)
+# For the Home Team: H is a win (1), A is a loss (-1)
+df['Home_Pts'] = df['FTR'].map({'H': 1, 'D': 0, 'A': -1})
+
+# For the Away Team: A is a win (1), H is a loss (-1)
+df['Away_Pts'] = df['FTR'].map({'H': -1, 'D': 0, 'A': 1})
+
+# =========================================================
+# FEATURE GENERATION 
+# =========================================================
+print("Calculating General and Specific features...")
+new_feature_blocks = []
+
+# --- A. CALCULATE MATCH FORM (RESULTS) ---
+# 1. General Form (Stitching Home and Away timelines together - Requires 10 overall games)
+gen_home_form = generic_stats.get_advanced_rolling_stats(df, 'Home', 'Gen_Form', 'Home_Pts', 'Away_Pts', min_matches=10)
+gen_away_form = generic_stats.get_advanced_rolling_stats(df, 'Away', 'Gen_Form', 'Home_Pts', 'Away_Pts', min_matches=10)
+
+# 2. Specific Form (Requires 10 Home games for Home, 10 Away games for Away)
+spec_home_form = generic_stats.get_specific_rolling_stats(df, 'HomeTeam', 'Home_Pts', 'Form', min_matches=10)
+spec_away_form = generic_stats.get_specific_rolling_stats(df, 'AwayTeam', 'Away_Pts', 'Form', min_matches=10)
+
+new_feature_blocks.extend([gen_home_form, gen_away_form, spec_home_form, spec_away_form])
+
+# --- B. CALCULATE STATISTICAL FORM (GOALS, CORNERS, ETC.) ---
 stats_to_calculate = [
     ('Goals_Pro', 'FTHG', 'FTAG'),
-    ('HT_Goals_Pro', 'HTHG', 'HTAG'),
-    ('HT_Goals_Against', 'HTAG', 'HTHG'),
-    ('Goals_Suffered', 'FTAG', 'FTHG'), # Full time conceded
+    ('Goals_Suffered', 'FTAG', 'FTHG'), 
     ('Corners_Pro', 'HC', 'AC'),
     ('Corners_Against', 'AC', 'HC'),
     ('Fouls_Pro', 'HF', 'AF'),
-    ('Fouls_Against', 'AF', 'HF'),
-    ('Offsides_Pro', 'HO', 'AO'),
-    ('Offsides_Against', 'AO', 'HO'),
+    ('Fouls_Against', 'AF', 'HF'),       
     ('Yellows_Pro', 'HY', 'AY'),
-    ('Yellows_Against', 'AY', 'HY'),
-    ('Reds_Pro', 'HR', 'AR'),
-    ('Reds_Against', 'AR', 'HR')
+    ('Yellows_Against', 'AY', 'HY'),     
+    ('ShotsTarget_Pro', 'HST', 'AST'), 
+    ('ShotsTarget_Against', 'AST', 'HST'),       
+    ('Shots_Pro', 'HS', 'AS'), 
+    ('Shots_Against', 'AS', 'HS'),       
 ]
 
-for stat_name, h_col, a_col in stats_to_calculate:
-    # 1. Specific Form (Home playing Home / Away playing Away)
-    df_train[f'Home_Spec_{stat_name}'] = generic_stats.get_home_rolling_avg(df, h_col, window)
-    df_train[f'Away_Spec_{stat_name}'] = generic_stats.get_away_rolling_avg(df, a_col, window)
+for stat_prefix, h_col, a_col in stats_to_calculate:
+    # 1. GENERAL STATS (Total season momentum)
+    h_gen = generic_stats.get_advanced_rolling_stats(df, 'Home', f'Gen_{stat_prefix}', h_col, a_col, min_matches=10)
+    a_gen = generic_stats.get_advanced_rolling_stats(df, 'Away', f'Gen_{stat_prefix}', h_col, a_col, min_matches=10)
     
-    # 2. General Form (Overall)
-    df_train[f'Home_Gen_{stat_name}'] = generic_stats.get_general_rolling_avg(df, 'Home', h_col, a_col, window)
-    df_train[f'Away_Gen_{stat_name}'] = generic_stats.get_general_rolling_avg(df, 'Away', h_col, a_col, window)
+    # 2. SPECIFIC STATS (Stadium specific momentum)
+    h_spec = generic_stats.get_specific_rolling_stats(df, 'HomeTeam', h_col, stat_prefix, min_matches=10)
+    a_spec = generic_stats.get_specific_rolling_stats(df, 'AwayTeam', a_col, stat_prefix, min_matches=10)
+    
+    new_feature_blocks.extend([h_gen, a_gen, h_spec, a_spec])
 
-# --- Results Features ---
-df_train['Home_Spec_Points'] = results.get_home_team_points_avg(df, window)
-df_train['Away_Spec_Points'] = results.get_away_team_points_avg(df, window)
-# Assuming you added get_general_points to results.py too:
-# df_train['Home_Gen_Points'] = results.get_home_team_general_points(df, window)
-# df_train['Away_Gen_Points'] = results.get_away_team_general_points(df, window)
+# Concatenate everything at once
+df_train = pd.concat([df_train] + new_feature_blocks, axis=1)
+df_train['FTR'] = results.get_target_class(df)
 
-# ---------------------------------------------------------
-# TARGET AND EXPORT
-# ---------------------------------------------------------
-df_train['Target'] = results.get_target_class(df)
-
+# =========================================================
+# THE PURGE
+# =========================================================
+print(f"Rows before purge: {len(df_train)}")
 df_train = df_train.dropna().reset_index(drop=True)
-df_train.to_csv('../processed-data/training_data.csv', index=False)
+print(f"Rows after purge: {len(df_train)}")
+
+df_train.to_csv('../processed-data/training_data_advanced_reduced.csv', index=False)
+print("Advanced Training Data Exported!")
