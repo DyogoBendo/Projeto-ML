@@ -5,10 +5,8 @@ import numpy as np
 # TARGET VARIABLE
 # ==========================================
 
-def get_target_class(df):
-    """Converts FTR (H, D, A) into integers (0, 1, 2) for ML training."""
-    mapping = {'H': 0, 'D': 1, 'A': 2}
-    return df['FTR'].map(mapping)
+def get_target_class(df):    
+    return df['FTR']
 
 # ==========================================
 # HISTORICAL POINTS FORM (Overall Momentum)
