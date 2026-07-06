@@ -3,8 +3,8 @@ import glob
 import os
 import generic_stats
 import results
-ema_windows = [5]
-sma_windows = [10]
+ema_windows = [3, 5, 7, 10]
+sma_windows = [3, 5, 7, 10]
 
 # =========================================================
 # 1. SINGLE SEASON PROCESSING ENGINE
@@ -26,6 +26,26 @@ def process_single_season(df):
     # --- CREATE PERSPECTIVE POINTS ---
     df['Home_Pts'] = df['FTR'].map({'H': 1, 'D': 0, 'A': -1})
     df['Away_Pts'] = df['FTR'].map({'H': -1, 'D': 0, 'A': 1})
+    
+    # 1. Goal Difference
+    df['Home_GD'] = df['FTHG'] - df['FTAG']
+    df['Away_GD'] = df['FTAG'] - df['FTHG']
+
+    # 2. Clean Sheets & Failed To Score (FTS)
+    df['Home_Clean_Sheet'] = (df['FTAG'] == 0).astype(int)
+    df['Away_Clean_Sheet'] = (df['FTHG'] == 0).astype(int)
+    df['Home_FTS'] = (df['FTHG'] == 0).astype(int)
+    df['Away_FTS'] = (df['FTAG'] == 0).astype(int)
+
+    # 3. Traditional Points (3 for Win, 1 for Draw, 0 for Loss)
+    df['Home_Trad_Pts'] = df['FTR'].map({'H': 3, 'D': 1, 'A': 0})
+    df['Away_Trad_Pts'] = df['FTR'].map({'H': 0, 'D': 1, 'A': 3})
+
+    # 4. Mental Resilience (Comebacks from losing at Half-Time)
+    # Check if HTR exists in the dataset first to prevent crashes on older datasets
+    if 'HTR' in df.columns:
+        df['Home_Comeback'] = ((df['HTR'] == 'A') & (df['FTR'].isin(['H', 'D']))).astype(int)
+        df['Away_Comeback'] = ((df['HTR'] == 'H') & (df['FTR'].isin(['A', 'D']))).astype(int)
 
     new_feature_blocks = []
 
@@ -52,6 +72,11 @@ def process_single_season(df):
         ('ShotsTarget_Against', 'AST', 'HST'),       
         ('Shots_Pro', 'HS', 'AS'), 
         ('Shots_Against', 'AS', 'HS'),       
+        ('GD', 'Home_GD', 'Away_GD'),
+        ('Clean_Sheet', 'Home_Clean_Sheet', 'Away_Clean_Sheet'),
+        ('FTS', 'Home_FTS', 'Away_FTS'),
+        ('Trad_Pts', 'Home_Trad_Pts', 'Away_Trad_Pts'),
+        ('Comeback', 'Home_Comeback', 'Away_Comeback')
     ]
 
     for stat_prefix, h_col, a_col in stats_to_calculate:
@@ -128,5 +153,5 @@ if __name__ == "__main__":
     df_train_final = pd.concat(processed_seasons_list, axis=0, ignore_index=True)
 
     print(f"Final Dataset Ready! Total rows: {len(df_train_final)}")
-    df_train_final.to_csv('../processed-data/training_data_final.csv', index=False)
+    df_train_final.to_csv('../processed-data/training_data.csv', index=False)
     print("Advanced Training Data Exported Successfully!")
