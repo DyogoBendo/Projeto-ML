@@ -1,90 +1,110 @@
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 from xgboost import XGBClassifier
-from sklearn.preprocessing import LabelEncoder
-from sklearn.feature_selection import RFECV
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.feature_selection import RFECV, SelectKBest, mutual_info_classif
 from sklearn.model_selection import StratifiedKFold
+import time
 
+def main():
+    print("Loading dataset for Feature Selection...")
+    try:
+        df = pd.read_csv('../processed-data/training_data.csv')
+    except FileNotFoundError:
+        print("Error: Could not find '../processed-data/training_data.csv'")
+        return
 
-print("Loading dataset for Feature Selection...")
-try:
-    df = pd.read_csv('../processed-data/training_data.csv')
-except FileNotFoundError:
-    print("Error: Could not find '../processed-data/training_data.csv'")    
+    # Separate features and target
+    X = df.drop(columns=['FTR'])
+    y = df['FTR']
 
-# Separate features and target
-X = df.drop(columns=['FTR'])
-y = df['FTR']
+    # Encode target variable ('A', 'D', 'H' -> 0, 1, 2)
+    le = LabelEncoder()
+    y_encoded = le.fit_transform(y)
 
-# Encode target variable ('A', 'D', 'H' -> 0, 1, 2)
-le = LabelEncoder()
-y_encoded = le.fit_transform(y)
+    print(f"Initial feature count: {X.shape[1]}")
 
-print(f"Initial feature count: {X.shape[1]}")
+    # CRITICAL: SVC and KNN require scaled data to evaluate distances properly.
+    # We scale the data for the selection process, but we will save the original unscaled values.
+    print("Scaling data for geometric evaluation...")
+    scaler = StandardScaler()
+    X_scaled_array = scaler.fit_transform(X)
+    X_scaled = pd.DataFrame(X_scaled_array, columns=X.columns, index=X.index)
 
-print("Initializing RFECV with StratifiedKFold (Independent rows assumption)...")
+    # Using StratifiedKFold to explicitly treat rows as independent
+    cv_strategy = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
-# Using StratifiedKFold with shuffle=True to explicitly treat rows as independent
-# while preserving the distribution of target classes in each fold.
-cv_strategy = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    # Define the base estimators for each algorithm
+    # SVC is now using 'rbf' exactly as it will in your final model pipeline
+    models = {
+        "XGBoost": XGBClassifier(n_estimators=100, max_depth=3, learning_rate=0.1, random_state=42, n_jobs=-1),
+        "RandomForest": RandomForestClassifier(n_estimators=50, max_depth=5, random_state=42, n_jobs=-1),        
+    }
 
-# Define the base estimator
-base_model = XGBClassifier(
-    n_estimators=100, 
-    max_depth=3, 
-    learning_rate=0.1, 
-    random_state=42, 
-    n_jobs=-1
-)
+    print("\nStarting individual Feature Selection per algorithm...")
 
-# Initialize the Recursive Feature Elimination with Cross-Validation
-selector = RFECV(
-    estimator=base_model,
-    step=0.05,            # Drop the bottom 5% of features iteratively
-    cv=cv_strategy,
-    scoring='accuracy',
-    min_features_to_select=15,
-    n_jobs=-1
-)
+    for model_name, model in models.items():
+        print(f"\n=======================================================")
+        print(f" OPTIMIZING FEATURES FOR: {model_name}")
+        print(f"=======================================================")
+        start_time = time.time()        
+        selector = RFECV(
+            estimator=model,
+            step=0.05,            # Drop bottom 5% of features each iteration
+            cv=cv_strategy,
+            scoring='accuracy',
+            min_features_to_select=15,
+            n_jobs=-1
+        )
+        selector.fit(X_scaled, y_encoded)
+        selected_features = X.columns[selector.support_].tolist()
+        optimal_num_features = selector.n_features_
 
-print("Fitting RFECV (This may take several minutes)...")
-selector.fit(X, y_encoded)
+        elapsed_time = time.time() - start_time
+        print(f"-> Finished in {elapsed_time:.2f} seconds.")
+        print(f"-> Optimal number of features found: {optimal_num_features}")
+        
+        # Save the optimized dataset using the ORIGINAL unscaled data
+        X_optimal = X[selected_features]
+        df_optimal = pd.concat([X_optimal, df['FTR']], axis=1)
+        
+        output_path = f'../processed-data/training_data_optimal_{model_name}.csv'
+        df_optimal.to_csv(output_path, index=False)
+        print(f"-> Dataset saved to: {output_path}")
 
-optimal_num_features = selector.n_features_
-selected_features = X.columns[selector.support_].tolist()
+    k_values = [25, 50, 100]
 
-print("\nFeature Selection Complete")
-print(f"Optimal number of features found: {optimal_num_features}")
+    print("\nStarting SelectKBest Feature Selection...")
 
-# Save the optimized dataset
-X_optimal = X[selected_features]
-df_optimal = pd.concat([X_optimal, df['FTR']], axis=1)
+    for k in k_values:
+        print(f"\n=======================================================")
+        print(f" OPTIMIZING FEATURES FOR: Top {k} Features")
+        print(f"=======================================================")
+        start_time = time.time()
 
-output_path = '../processed-data/training_data_optimal.csv'
-df_optimal.to_csv(output_path, index=False)
-print(f"Optimal Dataset saved to: {output_path}")
+        print(f"Method: Filter Method (SelectKBest with Mutual Information)")
+        print(f"[!] Instantly calculating the top {k} features using Mutual Information statistics...")
+        
+        # Initialize and fit SelectKBest
+        selector = SelectKBest(score_func=mutual_info_classif, k=k)
+        selector.fit(X_scaled, y_encoded)
+        
+        selected_features = X.columns[selector.get_support()].tolist()
+        optimal_num_features = len(selected_features)
 
-plt.figure(figsize=(10, 6))
-
-# Extract mean test scores from the cross-validation
-cv_results = selector.cv_results_['mean_test_score']
-
-# Calculate the approximate number of features at each step
-num_features_start = X.shape[1]
-features_at_step = [
-    max(15, num_features_start - int(num_features_start * 0.05) * i) 
-    for i in range(len(cv_results))
-]
-
-# Plotting the evaluation curve (reversing arrays so x-axis grows left-to-right)
-plt.plot(features_at_step[::-1], cv_results[::-1], marker='o', linestyle='-')
-plt.axvline(x=optimal_num_features, color='red', linestyle='--', label=f'Optimal: {optimal_num_features} Features')
-
-plt.title('Recursive Feature Elimination (Stratified CV)')
-plt.xlabel('Number of Features Evaluated')
-plt.ylabel('Cross-Validation Accuracy')
-plt.legend(loc='best')
-plt.grid(True, alpha=0.3)
-plt.tight_layout()
-plt.show()
+        elapsed_time = time.time() - start_time
+        print(f"-> Finished in {elapsed_time:.2f} seconds.")
+        print(f"-> Optimal number of features found: {optimal_num_features}")
+        
+        # Save the optimized dataset using the ORIGINAL unscaled data
+        X_optimal = X[selected_features]
+        df_optimal = pd.concat([X_optimal, df['FTR']], axis=1)
+        
+        output_path = f'../processed-data/training_data_kbest_{k}.csv'
+        df_optimal.to_csv(output_path, index=False)
+        print(f"-> Dataset saved to: {output_path}")
+if __name__ == "__main__":
+    main()
