@@ -59,13 +59,19 @@ def evaluate_best_rf():
     f1 = f1_score(y_test, y_pred, average='macro')
     lloss = log_loss(y_test, y_pred_probs)
     
+    # Calculate Macro Precision and Recall for general metrics
+    macro_precision = precision_score(y_test, y_pred, average='macro', zero_division=0)
+    macro_recall = recall_score(y_test, y_pred, average='macro', zero_division=0)
+    
     # Calculate Precision and Recall per class (average=None returns an array for [A, D, H])
     precisions = precision_score(y_test, y_pred, average=None, zero_division=0)
     recalls = recall_score(y_test, y_pred, average=None, zero_division=0)
     
     print("\n--- GLOBAL TEST SET METRICS ---")
-    print(f"Overall Accuracy: {acc * 100:.2f}%")    
-    print(f"F1-Score:   {f1:.4f}")
+    print(f"Overall Accuracy: {acc * 100:.2f}%")
+    print(f"Macro Precision:  {macro_precision * 100:.2f}%")
+    print(f"Macro Recall:     {macro_recall * 100:.2f}%")
+    print(f"Macro F1-Score:   {f1:.4f}")
     print(f"Log Loss:         {lloss:.4f}")
     
     print("\n--- PRECISION & RECALL ANALYSIS (TRUST METRICS) ---")
@@ -95,6 +101,11 @@ def evaluate_best_rf():
     plt.ylabel('True Result', fontsize=12, fontweight='bold')
     plt.xlabel('Predicted Result', fontsize=12, fontweight='bold')
     plt.tight_layout()
+    
+    # Save the graphic directly to your folder!
+    plt.savefig('rf_confusion_matrix.png', dpi=300, bbox_inches='tight')
+    print("\n[!] Confusion matrix saved as 'rf_confusion_matrix.png' in your current folder.")
+    
     plt.show()
 
 if __name__ == "__main__":
